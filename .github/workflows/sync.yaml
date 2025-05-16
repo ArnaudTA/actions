@@ -18,11 +18,26 @@ on:
       BRANCH_NAME:
         type: string
 
+      WAIT:
+        type: boolean
+        default: true
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     name: Synchronize app with distant platform
     steps:
+      - name: check-inputs
+        run: |
+          ERRORS=""
+          VALID=1
+          [[ -n "${{ secrets.GIT_MIRROR_TOKEN }}" ]] && unset VALID && ERRORS="Missing GIT_MIRROR_TOKEN"
+          [[ -n "${{ secrets.GILTAB_PROJECT_NAME }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GILTAB_PROJECT_NAME"
+          [[ -n "${{ secrets.GITLAB_PROJECT_ID }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_PROJECT_ID"
+          [[ -n "${{ secrets.GITLAB_URL }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_URL"
+          [[ -n "$VALID" ]] && echo ERRORS && exit 1
+
+      
       - name: call distant pipeline for synchronisation
         run: |
           curl -X POST --fail \
@@ -32,4 +47,3 @@ jobs:
             -F variables[BRANCH_NAME]=${{ inputs.SYNC_ALL }} \
             -F variables[PROJECT_NAME]=${{ secrets.GILTAB_PROJECT_NAME }} \
             "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_PROJECT_ID }}/trigger/pipeline"
-
