@@ -5,11 +5,13 @@ on:
     secrets:
       GITLAB_URL:
         required: true
-      GIT_MIRROR_TOKEN:
+      GITLAB_TRIGGER_TOKEN:
         required: true
+      GITLAB_TOKEN:
+        required: false
       GILTAB_PROJECT_NAME:
         required: true
-      GITLAB_PROJECT_ID:
+      GITLAB_MIRROR_ID:
         required: true
     inputs:
       SYNC_ALL:
@@ -26,24 +28,45 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     name: Synchronize app with distant platform
+    outputs:
+      PIPELINE_ID: ${{ steps.run_pipeline.outputs.PIPELINE_ID }}
+      LAUNCH_TIME: ${{ steps.run_pipeline.outputs.LAUNCH_TIME }}
     steps:
-      - name: check-inputs
-        run: |
-          ERRORS=""
-          VALID=1
-          [[ -n "${{ secrets.GIT_MIRROR_TOKEN }}" ]] && unset VALID && ERRORS="Missing GIT_MIRROR_TOKEN"
-          [[ -n "${{ secrets.GILTAB_PROJECT_NAME }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GILTAB_PROJECT_NAME"
-          [[ -n "${{ secrets.GITLAB_PROJECT_ID }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_PROJECT_ID"
-          [[ -n "${{ secrets.GITLAB_URL }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_URL"
-          [[ -n "$VALID" ]] && echo ERRORS && exit 1
+      # - name: check inputs
+      #   run: |
+      #     ERRORS=""
+      #     VALID=1
+      #     [[ -n "${{ secrets.GITLAB_TRIGGER_TOKEN }}" ]] && unset VALID && ERRORS="Missing GITLAB_TRIGGER_TOKEN"
+      #     [[ -n "${{ secrets.GILTAB_PROJECT_NAME }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GILTAB_PROJECT_NAME"
+      #     [[ -n "${{ secrets.GITLAB_MIRROR_ID }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_MIRROR_ID"
+      #     [[ -n "${{ secrets.GITLAB_URL }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_URL"
+      #     [[ -z "$VALID" ]] && echo $ERRORS && exit 1
 
-      
       - name: call distant pipeline for synchronisation
+        id: run_pipeline
         run: |
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "LAUNCH_TIME=$timestamp" >> "$GITHUB_OUTPUT"
+
           curl -X POST --fail \
-            -F token=${{ secrets.GIT_MIRROR_TOKEN }} \
+            -F token=${{ secrets.GITLAB_TRIGGER_TOKEN }} \
             -F ref=main \
             -F variables[SYNC_ALL]=${{ inputs.SYNC_ALL }} \
             -F variables[BRANCH_NAME]=${{ inputs.SYNC_ALL }} \
             -F variables[PROJECT_NAME]=${{ secrets.GILTAB_PROJECT_NAME }} \
-            "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_PROJECT_ID }}/trigger/pipeline"
+            "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_MIRROR_ID }}/trigger/pipeline" \
+            -o pipeline.yaml
+            echo "PIPELINE_ID=$(yq '.id' pipeline.yaml)" >> "$GITHUB_OUTPUT"
+            cat "$GITHUB_OUTPUT"
+          
+
+  wait:
+    if: ${{ inputs.WAIT }}
+    needs: sync
+    uses: ./.github/workflows/wait-pipeline.yaml
+    secrets:
+      GITLAB_PROJECT_ID: ${{ secrets.GITLAB_MIRROR_ID }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+    with:
+      PIPELINE_ID: ${{ needs.sync.outputs.PIPELINE_ID }}

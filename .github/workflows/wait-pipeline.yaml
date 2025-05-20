@@ -33,7 +33,6 @@ on:
           respect the `created_before` format 2019-03-15T08:00:00Z
           We recommend not define it and current time will be used
         type: string
-        default: auto
       CREATED_AFTER:
         description: |
           https://docs.gitlab.com/api/pipelines/#list-project-pipelines
@@ -52,42 +51,77 @@ on:
         type: number
         description: time to wait before launching checks, in seconds
         default: 0
+      PIPELINE_ID:
+        type: string
+        description: If you know the pipeline ID
+        required: false
 
 jobs:
-  sync:
+  wait-without-id:
+    if: ${{ inputs.PIPELINE_ID == '' }}
     runs-on: ubuntu-latest
-    name: Synchronize app with distant platform
+    name: Waiting for pipeline end result
     steps:
-      - name: check-inputs
+      - name: List pipelines and check (no PIPELINE_ID)
         run: |
-          ERRORS=""
-          VALID=1
-          [[ -n "${{ secrets.GITHUB_TOKEN }}" ]] && unset VALID && ERRORS="Missing GITHUB_TOKEN"
-          [[ -n "${{ secrets.GILTAB_PROJECT_NAME }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GILTAB_PROJECT_NAME"
-          [[ -n "${{ secrets.GITLAB_PROJECT_ID }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_PROJECT_ID"
-          [[ -n "${{ secrets.GITLAB_URL }}" ]] && unset VALID && ERRORS="${ERRORS}\nMissing GITLAB_URL"
-          [[ -n "$VALID" ]] && echo ERRORS && exit 1
+          # CREATED_BEFORE=${{ inputs.CREATED_BEFORE }}
+          # [[ $CREATED_BEFORE == "auto" ]] && CREATED_BEFORE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-      - name: call distant pipeline for synchronisation
+          echo "Wait ${{ inputs.GRACE_PERIOD }} second before checking..."
+          [[ ${{ inputs.GRACE_PERIOD }} -gt 0 ]] && sleep ${{ inputs.GRACE_PERIOD }}
+          echo "Starting check loop"
+
+          for i in {0..${{ inputs.MAX_RETRIES }}}; do
+            [[ -f pipeline.yaml ]] && rm pipeline.yaml
+
+            echo "Try n°$i"
+            curl -X GET --fail \
+              --header 'PRIVATE-TOKEN: ${{ secrets.GITLAB_TOKEN }}' \
+              "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_PROJECT_ID }}/pipelines?created_after=${{ inputs.CREATED_AFTER }}&created_before=${{ inputs.CREATED_BEFORE }}&ref=${{ inputs.REF }}&sha=${{ inputs.SHA }}" \
+              -o pipeline.yaml
+            
+            cat pipeline.yaml
+            length=$(yq '. | length' pipeline.yaml)
+
+            [[ $length -eq 0 ]] && echo No pipeline found && continue
+            
+            failed=$(yq '.[0].status == "failed"' pipeline.yaml)
+            [[ $failed == "true" ]] && echo Pipeline is failed && exit 1
+
+            success=$(yq '.[0].status == "success"' pipeline.yaml)
+            [[ $success == "true" ]] && echo Pipeline is success && exit 0
+            sleep ${{ inputs.CHECK_INTERVAL }}
+          done
+
+          echo Timeout exceeded
+          exit 1
+
+  wait-with-id:
+    if: ${{ inputs.PIPELINE_ID != '' }}
+    runs-on: ubuntu-latest
+    name: Waiting for pipeline end result
+    steps:
+      - name: Get pipeline by ID and check (with PIPELINE_ID)
+        if: ${{ inputs.PIPELINE_ID != '' }}
         run: |
-          [[ ${{ inputs.GRACE_PERIOD }} -gt 0 ]] && read -t ${{ inputs.GRACE_PERIOD }} -p "Wait ${{ inputs.GRACE_PERIOD }} second before checking..."
+          echo "Wait ${{ inputs.GRACE_PERIOD }} second before checking..."
+          [[ ${{ inputs.GRACE_PERIOD }} -gt 0 ]] && sleep ${{ inputs.GRACE_PERIOD }}
+          [[ -f pipeline.yaml ]] && rm pipeline.yaml
+
           echo "Starting check loop"
 
           for i in {0..${{ inputs.MAX_RETRIES }}}; do
             echo "Try n°$i"
-            RESULT=curl -X GET --fail \
+            curl -X GET --fail \
               --header 'PRIVATE-TOKEN: ${{ secrets.GITLAB_TOKEN }}' \
-              "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_PROJECT_ID }}/pipelines?created_after=${{ inputs.CREATED_AFTER }}&created_before=${{ inputs.CREATED_BEFORE }}&ref=${{ inputs.REF }}&sha=${{ inputs.SHA }}"
-            
-            length=$(echo $RESULT | yq '. | length')
+              "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_PROJECT_ID }}/pipelines/${{ inputs.PIPELINE_ID }}" -o pipeline.yaml
 
-            [[ $length -eq 0 ]] && echo No pipeline found && continue
-            
-            failed=$(echo $RESULT | yq '.[0].status == "failed"')
+            failed=$(yq '.status == "failed"' pipeline.yaml)
             [[ $failed == "true" ]] && echo Pipeline is failed && exit 1
 
-            success=$(echo $RESULT | yq '.[0].status == "success"')
+            success=$(yq '.status == "success"' pipeline.yaml)
             [[ $success == "true" ]] && echo Pipeline is success && exit 0
+            sleep ${{ inputs.CHECK_INTERVAL }}
           done
 
           echo Timeout exceeded
