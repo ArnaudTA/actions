@@ -52,7 +52,7 @@ jobs:
             -F token=${{ secrets.GITLAB_TRIGGER_TOKEN }} \
             -F ref=main \
             -F variables[SYNC_ALL]=${{ inputs.SYNC_ALL }} \
-            -F variables[BRANCH_NAME]=${{ inputs.SYNC_ALL }} \
+            -F variables[GIT_BRANCH_DEPLOY]=${{ inputs.BRANCH_NAME }} \
             -F variables[PROJECT_NAME]=${{ secrets.GILTAB_PROJECT_NAME }} \
             "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_MIRROR_ID }}/trigger/pipeline" \
             -o pipeline.yaml

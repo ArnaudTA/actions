@@ -106,11 +106,12 @@ jobs:
         run: |
           echo "Wait ${{ inputs.GRACE_PERIOD }} second before checking..."
           [[ ${{ inputs.GRACE_PERIOD }} -gt 0 ]] && sleep ${{ inputs.GRACE_PERIOD }}
-          [[ -f pipeline.yaml ]] && rm pipeline.yaml
-
+          
           echo "Starting check loop"
-
+          
           for i in {0..${{ inputs.MAX_RETRIES }}}; do
+            [[ -f pipeline.yaml ]] && rm pipeline.yaml
+            
             echo "Try n°$i"
             curl -X GET --fail \
               --header 'PRIVATE-TOKEN: ${{ secrets.GITLAB_TOKEN }}' \
