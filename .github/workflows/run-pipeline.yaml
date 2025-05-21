@@ -1,0 +1,68 @@
+name: Synchronize source code
+
+on:
+  workflow_call:
+    secrets:
+      GITLAB_URL:
+        required: true
+      GITLAB_TRIGGER_TOKEN:
+        required: true
+      GITLAB_TOKEN:
+        required: false
+      GITLAB_PROJECT_ID:
+        required: true
+      CI_VARS:
+        description: |
+          variables to pass, multiline form
+          ex: |
+            SYNC_ALL=true -> "-F variables[SYNC_ALL]=true"
+            PROJECT_NAME=application -> "-F variables[PROJECT_NAME]=application"
+    inputs:
+      REF:
+        type: string
+        default: main
+        required: true
+      CI_VARS:
+        type: string
+        description: |
+          variables to pass, multiline form
+          ex: |
+            SYNC_ALL=true -> "-F variables[SYNC_ALL]=true"
+            PROJECT_NAME=application -> "-F variables[PROJECT_NAME]=application"
+      WAIT:
+        type: boolean
+        default: true
+
+jobs:
+  run:
+    outputs:
+      PIPELINE_ID: ${{ steps.call_trigger.outputs.PIPELINE_ID }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: call_trigger
+        run: |
+          echo "token=${{ secrets.GITLAB_TRIGGER_TOKEN }}" >> formdata.txt
+          echo "ref=${{ inputs.REF }}" >> formdata.txt
+          echo '${{ inputs.CI_VARS }}' >> formdata.txt
+          echo '${{ secrets.CI_VARS }}' >> formdata.txt
+          cat formdata.txt
+          args=()
+
+          while IFS= read -r line; do
+            # Ignore les lignes vides
+            [[ -z "$line" ]] && continue
+            args+=(-F "$line")
+          done < formdata.txt
+
+          curl -X POST --fail "${args[@]}" \
+            "${{ secrets.GITLAB_URL }}/api/v4/projects/${{ secrets.GITLAB_MIRROR_ID }}/trigger/pipeline" \
+            -o pipeline.yaml
+            echo "PIPELINE_ID=$(yq '.id' pipeline.yaml)" >> "$GITHUB_OUTPUT"
+            cat "$GITHUB_OUTPUT"
+
+      - if: ${{ inputs.WAIT }}
+        uses: ./.github/workflows/wait-pipeline.yaml
+        with:
+          PIPELINE_ID: ${{ steps.call_trigger.outputs.PIPELINE_ID }}
+
+    
